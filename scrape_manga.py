@@ -9,12 +9,11 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from threading import Lock
 from datetime import datetime
 
-# === KONFIGURASI GITHUB ACTIONS ===
+# === KONFIG ===
 BASE_URL = "https://komikcast03.com"
 LIST_URL = BASE_URL + "/daftar-komik/"
 DOWNLOAD_DIR = "manga"
 MAX_WORKERS = 3
-MAX_PAGES = 9999
 HEADERS = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
     'Referer': BASE_URL
@@ -24,20 +23,26 @@ print_lock = Lock()
 metadata_lock = Lock()
 all_metadata = []
 metadata_file = "manga_metadata.json"
-last_print = time.time()
+state_file = "state.json"
 
 def log(msg):
-    global last_print
     with print_lock:
         now = datetime.now().strftime("%H:%M:%S")
         print(f"[{now}] {msg}")
-        last_print = time.time()
 
-def heartbeat():
-    """Print tiap 5 menit agar tidak timeout"""
-    while True:
-        time.sleep(300)  # 5 menit
-        log("HEARTBEAT: masih berjalan...")
+def save_state(page):
+    with open(state_file, "w", encoding="utf-8") as f:
+        json.dump({"last_page": page}, f, indent=2)
+
+def load_state():
+    if os.path.exists(state_file):
+        try:
+            with open(state_file, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                return data.get("last_page", 0)
+        except:
+            return 0
+    return 0
 
 def init():
     global all_metadata
@@ -65,41 +70,36 @@ def download_image(session, img_url, folder, filename):
 
 def get_manga_list(page):
     url = LIST_URL if page == 1 else f"{LIST_URL}page/{page}/"
-    log(f"Mengambil halaman {page}: {url}")
+    log(f"→ Halaman {page}: {url}")
     try:
         r = requests.get(url, headers=HEADERS, timeout=15)
         if r.status_code != 200:
-            log(f"GAGAL halaman {page}: status {r.status_code}")
+            log(f"GAGAL: status {r.status_code}")
             return []
     except Exception as e:
-        log(f"ERROR koneksi halaman {page}: {e}")
+        log(f"ERROR: {e}")
         return []
 
     soup = BeautifulSoup(r.text, 'html.parser')
-    manga_list = []
     items = soup.select('.list-update_item')
-    log(f"Ditemukan {len(items)} manga di halaman {page}")
+    log(f"Ditemukan {len(items)} manga")
+    manga_list = []
     for item in items:
         a = item.find('a')
         if not a or not a.get('href'): continue
         title = a.find('h3', class_='title').get_text(strip=True) if a.find('h3', class_='title') else "Unknown"
         detail_url = a['href']
         latest_chapter = a.find('div', class_='chapter').get_text(strip=True) if a.find('div', class_='chapter') else "Ch.0"
-        rating = a.find('div', class_='numscore').get_text(strip=True) if a.find('div', class_='numscore') else "0"
-        manga_type = a.find('span', class_='type').get_text(strip=True) if a.find('span', class_='type') else "Unknown"
         manga_list.append({
             'title': title,
             'detail_url': detail_url,
-            'latest_chapter': latest_chapter,
-            'rating': rating,
-            'type': "Manga" if "manga" in manga_type.lower() else "Manhwa"
+            'latest_chapter': latest_chapter
         })
     return manga_list
 
 def download_manga(manga):
     global all_metadata
     thread_id = f"[T{random.randint(100,999)}]"
-    
     safe_title = "".join(c if c.isalnum() or c in " _-" else "_" for c in manga['title'])
     safe_title = safe_title.replace(" ", "_")[:100].strip("_")
     manga_folder = os.path.join(DOWNLOAD_DIR, safe_title)
@@ -116,12 +116,8 @@ def download_manga(manga):
 
         try:
             r = session.get(manga['detail_url'], timeout=15)
-            if r.status_code != 200:
-                log(f"{thread_id} [GAGAL] Status {r.status_code}")
-                return None
-        except Exception as e:
-            log(f"{thread_id} [ERROR] {e}")
-            return None
+            if r.status_code != 200: return None
+        except: return None
 
         soup = BeautifulSoup(r.text, 'html.parser')
         title_elem = soup.find('h1', class_='komik_info-content-body-title')
@@ -134,14 +130,12 @@ def download_manga(manga):
         safe_title = safe_title.replace(" ", "_")[:100].strip("_")
         manga_folder = os.path.join(DOWNLOAD_DIR, safe_title)
         os.makedirs(manga_folder, exist_ok=True)
-        log(f"{thread_id} [FOLDER] {manga_folder}")
 
         # Cover
         cover_img = soup.find('div', class_='komik_info-cover-image')
         cover_url = cover_img.find('img')['src'] if cover_img and cover_img.find('img') else None
         if cover_url and not os.path.exists(os.path.join(manga_folder, "cover.jpg")):
-            if download_image(session, cover_url, manga_folder, "cover.jpg"):
-                log(f"{thread_id} [OK] Cover")
+            download_image(session, cover_url, manga_folder, "cover.jpg")
 
         # Metadata
         genres = [a.get_text(strip=True) for a in soup.select('.komik_info-content-genre a')]
@@ -159,30 +153,24 @@ def download_manga(manga):
                 time_tag = span.find('time')
                 meta['updated'] = time_tag.get_text(strip=True) if time_tag else text.split(':', 1)[1].strip()
 
-        rating_tag = soup.find('div', class_='data-rating')
-        rating = rating_tag['data-ratingkomik'] if rating_tag and rating_tag.get('data-ratingkomik') else "0"
+        rating = soup.find('div', class_='data-rating')['data-ratingkomik'] if soup.find('div', class_='data-rating') else "0"
+        sinopsis = soup.find('div', class_='komik_info-description-sinopsis').get_text(strip=True, separator='\n') if soup.find('div', class_='komik_info-description-sinopsis') else "Tidak ada sinopsis."
 
-        sinopsis_elem = soup.find('div', class_='komik_info-description-sinopsis')
-        sinopsis = sinopsis_elem.get_text(strip=True, separator='\n') if sinopsis_elem else "Tidak ada sinopsis."
-
-        # Chapter
+        # Chapter (hanya 1 chapter baru)
         chapters = []
         chapter_list = soup.find('ul', id='chapter-wrapper')
         if chapter_list:
-            items = chapter_list.find_all('li', class_='komik_info-chapters-item')
-            log(f"{thread_id} [CHAPTER] {len(items)} chapter tersedia")
-            for item in items:
+            for item in chapter_list.find_all('li', class_='komik_info-chapters-item')[:1]:  # HANYA 1 CHAPTER
                 a = item.find('a', class_='chapter-link-item')
                 if a and a.get('href'):
                     ch_text = a.get_text(strip=True).replace("Chapter ", "Ch.")
                     chapters.append({'chapter': ch_text, 'url': a['href']})
 
-        existing_chapters = {d.split("_")[-1] for d in os.listdir(manga_folder) if d.startswith("Chapter_")}
         downloaded = 0
         for ch in chapters:
             chap_num = ch['chapter'].split()[-1].zfill(3)
-            if chap_num in existing_chapters:
-                continue
+            chap_folder = os.path.join(manga_folder, f"Chapter_{chap_num}")
+            if os.path.exists(chap_folder): continue
             try:
                 r_ch = session.get(ch['url'], timeout=15)
                 if r_ch.status_code != 200: continue
@@ -190,18 +178,15 @@ def download_manga(manga):
                 body = soup_ch.find('div', id='chapter_body')
                 if not body: continue
                 imgs = body.find_all('img')
-                chap_folder = os.path.join(manga_folder, f"Chapter_{chap_num}")
                 os.makedirs(chap_folder, exist_ok=True)
                 for idx, img in enumerate(imgs, 1):
                     img_url = img.get('src') or img.get('data-src')
                     if img_url and img_url.startswith('http'):
                         download_image(session, img_url, chap_folder, f"{idx:03d}.jpg")
-                    time.sleep(0.1)
                 downloaded += 1
-                log(f"{thread_id} [OK] {ch['chapter']} → {len(imgs)} gambar")
+                log(f"{thread_id} [OK] {ch['chapter']}")
             except:
                 pass
-            time.sleep(0.5)
 
         # Simpan info.json
         info = {
@@ -211,7 +196,7 @@ def download_manga(manga):
             "Released": meta.get('released', 'Unknown'),
             "Author": meta.get('author', 'Unknown'),
             "Status": meta.get('status', 'Unknown'),
-            "Type": meta.get('type', manga['type']),
+            "Type": meta.get('type', 'Unknown'),
             "Total Chapter": meta.get('total_chapter', '?'),
             "Updated on": meta.get('updated', 'Unknown'),
             "Rating": rating,
@@ -220,40 +205,35 @@ def download_manga(manga):
         with open(os.path.join(manga_folder, "info.json"), "w", encoding="utf-8") as f:
             json.dump(info, f, ensure_ascii=False, indent=2)
 
-        entry = {**info, "folder": safe_title, "downloaded_chapters": downloaded, "total_available": len(chapters)}
+        entry = {**info, "folder": safe_title, "downloaded_chapters": downloaded}
         with metadata_lock:
             all_metadata = [m for m in all_metadata if m["folder"] != safe_title] + [entry]
 
-        log(f"{thread_id} [SELESAI] {downloaded} chapter baru")
+        log(f"{thread_id} [SELESAI] {downloaded} chapter")
         return entry
 
 def main():
-    log("=== MANGA SCRAPER - GITHUB ACTIONS MODE ===")
+    log("=== SMART MANGA SCRAPER ===")
     init()
+    start_page = load_state() + 1
+    log(f"Resume dari halaman {start_page}")
 
-    import threading
-    threading.Thread(target=heartbeat, daemon=True).start()
+    manga_list = get_manga_list(start_page)
+    if not manga_list:
+        log("Tidak ada data. Mungkin sudah selesai.")
+        save_state(start_page - 1)
+        return
 
-    page = 1
-    while page <= MAX_PAGES:
-        manga_list = get_manga_list(page)
-        if not manga_list:
-            log(f"Halaman {page} kosong. Selesai.")
-            break
+    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+        futures = [executor.submit(download_manga, m) for m in manga_list]
+        for f in as_completed(futures):
+            f.result()
 
-        log(f"PROSES HALAMAN {page} → {len(manga_list)} manga")
-        with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
-            futures = [executor.submit(download_manga, m) for m in manga_list]
-            for f in as_completed(futures):
-                f.result()
-
-        page += 1
-        time.sleep(2)  # Jeda antar halaman
-
+    save_state(start_page)
     with open(metadata_file, "w", encoding="utf-8") as f:
         json.dump(all_metadata, f, ensure_ascii=False, indent=2)
 
-    log(f"SELESAI! {len(all_metadata)} manga tersimpan di: {DOWNLOAD_DIR}")
+    log(f"SELESAI halaman {start_page} → lanjut besok!")
 
 if __name__ == '__main__':
     main()

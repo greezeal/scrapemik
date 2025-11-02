@@ -1,278 +1,183 @@
-# scrape_manga_debug.py
-import os
-import time
-import random
-import json
-import requests
+import requests, json, os, time, signal, sys
 from bs4 import BeautifulSoup
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from threading import Lock
 from datetime import datetime
+import re
 
-# === KONFIG ===
-BASE_URL = "https://komikcast03.com"
-LIST_URL = BASE_URL + "/daftar-komik/"
-DOWNLOAD_DIR = "manga"
-MAX_WORKERS = 3
-HEADERS = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-    'Referer': BASE_URL
+# === KONFIGURASI ===
+BASE_DIR = "comics"
+HEADERS = {"User-Agent": "Mozilla/5.0", "Referer": "https://komikindo.ch/"}
+DELAY_CHAPTER = 0.3
+os.makedirs(BASE_DIR, exist_ok=True)
+
+def now():
+    return datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+
+# === SAVE ON STOP ===
+def save_and_exit(sig=None, frame=None):
+    print(f"\n[{now()}] Dihentikan oleh user (Ctrl+C)")
+    print(f"[{now()}] SELESAI (aman)! Semua data tersimpan per file.")
+    sys.exit(0)
+
+signal.signal(signal.SIGINT, save_and_exit)
+
+# === SANITIZE FILENAME: Ganti spasi → dash, hapus karakter terlarang ===
+def sanitize_filename(name):
+    # Ganti spasi dengan dash
+    name = name.replace(" ", "-")
+    # Hapus karakter tidak aman
+    name = re.sub(r'[<>:"/\\|?*]', '_', name)
+    # Hapus tanda titik di awal/akhir
+    name = name.strip('.')
+    # Batasi panjang
+    return name[:100]
+
+# === FUNGSI GET & SOUP ===
+def get(url):
+    try:
+        r = requests.get(url, headers=HEADERS, timeout=15)
+        r.raise_for_status()
+        return r.text
+    except Exception as e:
+        print(f"   Gagal: {e}")
+        return None
+
+def soup(url):
+    html = get(url)
+    return BeautifulSoup(html, 'html.parser') if html else None
+
+# === SIMPAN KOMIK KE FILE SENDIRI ===
+def save_comic(comic_data):
+    title = comic_data['title']
+    safe_title = sanitize_filename(title)
+    filename = f"{BASE_DIR}/{safe_title}.json"
+    with open(filename, 'w', encoding='utf-8') as f:
+        json.dump(comic_data, f, ensure_ascii=False, indent=2)
+    print(f"[{now()}]    Simpan: {filename} ({len(comic_data['chapters'])} chapter)")
+
+# === LOAD DAFTAR FILE YANG SUDAH ADA (untuk skip) ===
+existing_files = {
+    os.path.splitext(f)[0].replace("-", " ") for f in os.listdir(BASE_DIR)
+    if f.endswith('.json')
 }
 
-print_lock = Lock()
-metadata_lock = Lock()
-all_metadata = []
-metadata_file = "manga_metadata.json"
-state_file = "state.json"
+# === AMBIL DAFTAR KOMIK ===
+print(f"[{now()}] Mengambil daftar komik...")
+s = soup("https://komikindo.ch/komik-terbaru/")
+comics = []
+for a in s.select('.animepost a[itemprop="url"]'):
+    if a.get('href'):
+        title = a['title'].replace("Komik ", "", 1).strip()
+        comics.append({"title": title, "url": a['href']})
 
-def log(msg):
-    with print_lock:
-        now = datetime.now().strftime("%H:%M:%S")
-        print(f"[{now}] {msg}")
+# === LOOP SETIAP KOMIK ===
+for comic in comics:
+    title, url = comic['title'], comic['url']
+    print(f"\n[{now()}] → {title}")
 
-def save_state(page):
-    try:
-        with open(state_file, "w", encoding="utf-8") as f:
-            json.dump({"last_page": page}, f, indent=2)
-        log(f"State disimpan: halaman {page}")
-    except Exception as e:
-        log(f"GAGAL simpan state: {e}")
+    if title in existing_files:
+        print(f"[{now()}]    Sudah ada, skip.")
+        continue
 
-def load_state():
-    if os.path.exists(state_file):
-        try:
-            with open(state_file, "r", encoding="utf-8") as f:
-                data = json.load(f)
-                page = data.get("last_page", 0)
-                log(f"Resume dari halaman {page + 1}")
-                return page
-        except Exception as e:
-            log(f"GAGAL baca state: {e}")
-    return 0
+    # === BUAT DATA KOMIK ===
+    comic_data = {
+        "title": title,
+        "cover_image": None,
+        "alternative_titles": [], "status": "", "author": [], "illustrator": [],
+        "type": "", "demographic": "", "themes": [], "genres": [],
+        "rating": 0.0, "votes": 0, "synopsis": "", "last_updated": "", "chapters": []
+    }
 
-def init():
-    global all_metadata
-    os.makedirs(DOWNLOAD_DIR, exist_ok=True)
-    log(f"Folder: {os.path.abspath(DOWNLOAD_DIR)}")
-    if os.path.exists(metadata_file):
-        try:
-            with open(metadata_file, "r", encoding="utf-8") as f:
-                all_metadata = json.load(f)
-            log(f"LOADED {len(all_metadata)} manga dari metadata")
-        except Exception as e:
-            log(f"GAGAL baca metadata: {e}")
-            all_metadata = []
+    # === DETAIL KOMIK ===
+    s_detail = soup(url)
+    if not s_detail:
+        continue
 
-def download_image(session, img_url, folder, filename):
-    try:
-        r = session.get(img_url, timeout=15)
-        if r.status_code == 200:
-            os.makedirs(folder, exist_ok=True)
-            path = os.path.join(folder, filename)
-            with open(path, 'wb') as f:
-                f.write(r.content)
-            return True
-        else:
-            log(f"GAMBAR GAGAL: {img_url} → {r.status_code}")
-    except Exception as e:
-        log(f"GAMBAR ERROR: {img_url} → {e}")
-    return False
+    # Cover
+    thumb = s_detail.find('div', class_='thumb')
+    if thumb and thumb.find('img'):
+        comic_data['cover_image'] = thumb.find('img')['src']
 
-def get_manga_list(page):
-    url = LIST_URL if page == 1 else f"{LIST_URL}page/{page}/"
-    log(f"Mengambil: {url}")
-    try:
-        r = requests.get(url, headers=HEADERS, timeout=20)
-        log(f"Status: {r.status_code}")
-        if r.status_code != 200:
-            log(f"GAGAL halaman {page}: status {r.status_code}")
-            return []
-    except Exception as e:
-        log(f"KONEKSI GAGAL: {e}")
-        return []
+    # Info dari .infox
+    infox = s_detail.find('div', class_='infox')
+    if infox:
+        for span in infox.find_all('span'):
+            b = span.find('b')
+            if not b: continue
+            key = b.get_text(strip=True).rstrip(':').lower()
+            text = span.get_text(separator=" ", strip=True)
 
-    soup = BeautifulSoup(r.text, 'html.parser')
-    items = soup.select('.list-update_item')
-    log(f"Ditemukan {len(items)} item di halaman {page}")
-    if not items:
-        log("Tidak ada .list-update_item → situs mungkin berubah!")
-        return []
+            if "judul alternatif" in key:
+                comic_data['alternative_titles'] = [x.strip() for x in text.split(":", 1)[1].split(",") if x.strip()]
+            elif "status" in key:
+                comic_data['status'] = text.split(":", 1)[1].strip()
+            elif "pengarang" in key:
+                comic_data['author'] = [x.strip() for x in text.split(":", 1)[1].split(",") if x.strip()]
+            elif "ilustrator" in key:
+                comic_data['illustrator'] = [x.strip() for x in text.split(":", 1)[1].split(",") if x.strip()]
+            elif "grafis" in key:
+                a = span.find('a')
+                comic_data['demographic'] = a.get_text(strip=True) if a else ""
+            elif "tema" in key:
+                comic_data['themes'] = [a.get_text(strip=True) for a in span.find_all('a')]
+            elif "jenis komik" in key:
+                a = span.find('a')
+                comic_data['type'] = a.get_text(strip=True) if a else ""
 
-    manga_list = []
-    for item in items:
-        a = item.find('a')
-        if not a or not a.get('href'):
-            log("Item tanpa link!")
-            continue
-        title_tag = a.find('h3', class_='title')
-        title = title_tag.get_text(strip=True) if title_tag else "Unknown"
-        detail_url = a['href']
-        chapter_tag = a.find('div', class_='chapter')
-        latest_chapter = chapter_tag.get_text(strip=True) if chapter_tag else "Ch.0"
-        manga_list.append({
-            'title': title,
-            'detail_url': detail_url,
-            'latest_chapter': latest_chapter
-        })
-    log(f"→ {len(manga_list)} manga valid")
-    return manga_list
+    # Genre
+    genre_div = s_detail.find('div', class_='genre-info')
+    if genre_div:
+        comic_data['genres'] = [a.get_text(strip=True) for a in genre_div.find_all('a')]
 
-def download_manga(manga):
-    global all_metadata
-    thread_id = f"[T{random.randint(100,999)}]"
-    safe_title = "".join(c if c.isalnum() or c in " _-" else "_" for c in manga['title'])
-    safe_title = safe_title.replace(" ", "_")[:100].strip("_")
-    manga_folder = os.path.join(DOWNLOAD_DIR, safe_title)
+    # Rating
+    rt = s_detail.find('i', itemprop='ratingValue')
+    comic_data['rating'] = float(rt.get_text(strip=True)) if rt else 0.0
+    vt = s_detail.find('div', class_='votescount')
+    comic_data['votes'] = int(''.join(filter(str.isdigit, vt.get_text(strip=True)))) if vt else 0
 
-    # Cek duplikasi
-    if os.path.exists(manga_folder):
-        existing = next((m for m in all_metadata if m["folder"] == safe_title), None)
-        if existing:
-            log(f"{thread_id} [SKIP] {manga['title']}")
-            return existing
+    # Sinopsis
+    syn = s_detail.find('div', class_='entry-content-single')
+    comic_data['synopsis'] = syn.get_text(separator=" ", strip=True) if syn else ""
 
-    log(f"{thread_id} [START] {manga['title']}")
-    with requests.Session() as session:
-        session.headers.update(HEADERS)
+    # Last updated
+    date_span = s_detail.find('span', class_='datech')
+    comic_data['last_updated'] = date_span.get_text(strip=True) if date_span else ""
 
-        # === DETAIL PAGE ===
-        try:
-            r = session.get(manga['detail_url'], timeout=20)
-            log(f"{thread_id} Detail → {r.status_code}")
-            if r.status_code != 200:
-                log(f"{thread_id} GAGAL detail: {r.status_code}")
-                return None
-        except Exception as e:
-            log(f"{thread_id} ERROR detail: {e}")
-            return None
+    # === SEMUA CHAPTER ===
+    ch_list = s_detail.find('div', id='chapter_list')
+    if ch_list:
+        for li in reversed(ch_list.find_all('li')):
+            a = li.find('a')
+            if not a: continue
+            ch_tag = a.find('chapter')
+            if not ch_tag: continue
+            ch_num = ch_tag.get_text(strip=True)
+            ch_url = a['href']
 
-        soup = BeautifulSoup(r.text, 'html.parser')
+            print(f"[{now()}]    → Chapter {ch_num}")
 
-        # === JUDUL ===
-        title_elem = soup.find('h1', class_='komik_info-content-body-title')
-        full_title = title_elem.get_text(strip=True) if title_elem else manga['title']
-        title = full_title.replace(" Bahasa Indonesia", "")
-        log(f"{thread_id} Judul: {title}")
+            s_ch = soup(ch_url)
+            if not s_ch: continue
+            container = s_ch.find('div', id='Baca_Komik') or s_ch.find('div', class_='chapter-image')
+            if not container: continue
 
-        # === FOLDER ===
-        safe_title = "".join(c if c.isalnum() or c in " _-" else "_" for c in title)
-        safe_title = safe_title.replace(" ", "_")[:100].strip("_")
-        manga_folder = os.path.join(DOWNLOAD_DIR, safe_title)
-        os.makedirs(manga_folder, exist_ok=True)
-        log(f"{thread_id} Folder: {manga_folder}")
+            images = []
+            for img in container.find_all('img'):
+                src = img.get('src') or img.get('data-src') or img.get('data-lazy-src')
+                if src and src.startswith('http'):
+                    images.append(src.strip())
 
-        # === COVER ===
-        cover_img = soup.find('div', class_='komik_info-cover-image')
-        cover_url = None
-        if cover_img and cover_img.find('img'):
-            cover_url = cover_img.find('img')['src']
-            if cover_url and not os.path.exists(os.path.join(manga_folder, "cover.jpg")):
-                if download_image(session, cover_url, manga_folder, "cover.jpg"):
-                    log(f"{thread_id} [OK] Cover")
+            comic_data['chapters'].append({
+                "number": ch_num,
+                "images": images
+            })
 
-        # === METADATA ===
-        genres = [a.get_text(strip=True) for a in soup.select('.komik_info-content-genre a')]
-        meta = {}
-        for span in soup.select('.komik_info-content-meta span'):
-            text = span.get_text(strip=True)
-            if 'Released:' in text: meta['released'] = text.split(':', 1)[1].strip()
-            elif 'Author:' in text: meta['author'] = text.split(':', 1)[1].strip()
-            elif 'Status:' in text: meta['status'] = text.split(':', 1)[1].strip()
-            elif 'Type:' in text:
-                a_tag = span.find('a')
-                meta['type'] = a_tag.get_text(strip=True) if a_tag else text.split(':', 1)[1].strip()
-            elif 'Total Chapter:' in text: meta['total_chapter'] = text.split(':', 1)[1].strip()
-            elif 'Updated on:' in text:
-                time_tag = span.find('time')
-                meta['updated'] = time_tag.get_text(strip=True) if time_tag else text.split(':', 1)[1].strip()
+            # SIMPAN SETIAP CHAPTER SELESAI
+            save_comic(comic_data)
+            time.sleep(DELAY_CHAPTER)
 
-        rating = soup.find('div', class_='data-rating')['data-ratingkomik'] if soup.find('div', class_='data-rating') else "0"
-        sinopsis = soup.find('div', class_='komik_info-description-sinopsis')
-        sinopsis_text = sinopsis.get_text(strip=True, separator='\n') if sinopsis else "Tidak ada sinopsis."
+    # SIMPAN AKHIR
+    save_comic(comic_data)
+    existing_files.add(title)
 
-        # === SIMPAN info.json (PASTIKAN FOLDER ADA) ===
-        info = {
-            "title": full_title,
-            "native": soup.find('span', class_='komik_info-content-native').get_text(strip=True) if soup.find('span', class_='komik_info-content-native') else "",
-            "genre": ", ".join(genres),
-            "Released": meta.get('released', 'Unknown'),
-            "Author": meta.get('author', 'Unknown'),
-            "Status": meta.get('status', 'Unknown'),
-            "Type": meta.get('type', 'Unknown'),
-            "Total Chapter": meta.get('total_chapter', '?'),
-            "Updated on": meta.get('updated', 'Unknown'),
-            "Rating": rating,
-            "sinopsis": sinopsis_text
-        }
-
-        info_path = os.path.join(manga_folder, "info.json")
-        try:
-            with open(info_path, "w", encoding="utf-8") as f:
-                json.dump(info, f, ensure_ascii=False, indent=2)
-            log(f"{thread_id} [OK] info.json disimpan")
-        except Exception as e:
-            log(f"{thread_id} GAGAL simpan info.json: {e}")
-
-        # === CHAPTER (1 chapter baru) ===
-        chapter_list = soup.find('ul', id='chapter-wrapper')
-        if chapter_list:
-            first_ch = chapter_list.find('li', class_='komik_info-chapters-item')
-            if first_ch:
-                a = first_ch.find('a', class_='chapter-link-item')
-                if a and a.get('href'):
-                    ch_text = a.get_text(strip=True).replace("Chapter ", "Ch.")
-                    ch_url = a['href']
-                    chap_num = ch_text.split()[-1].zfill(3)
-                    chap_folder = os.path.join(manga_folder, f"Chapter_{chap_num}")
-                    if not os.path.exists(chap_folder):
-                        os.makedirs(chap_folder, exist_ok=True)
-                        try:
-                            r_ch = session.get(ch_url, timeout=15)
-                            if r_ch.status_code == 200:
-                                soup_ch = BeautifulSoup(r_ch.text, 'html.parser')
-                                body = soup_ch.find('div', id='chapter_body')
-                                if body:
-                                    imgs = body.find_all('img')
-                                    for idx, img in enumerate(imgs, 1):
-                                        img_url = img.get('src') or img.get('data-src')
-                                        if img_url and img_url.startswith('http'):
-                                            download_image(session, img_url, chap_folder, f"{idx:03d}.jpg")
-                                    log(f"{thread_id} [OK] {ch_text} → {len(imgs)} gambar")
-                        except Exception as e:
-                            log(f"{thread_id} GAGAL chapter: {e}")
-
-        # === UPDATE METADATA ===
-        entry = {**info, "folder": safe_title, "downloaded_chapters": 1 if os.path.exists(os.path.join(manga_folder, "Chapter_")) else 0}
-        with metadata_lock:
-            all_metadata = [m for m in all_metadata if m["folder"] != safe_title] + [entry]
-
-        log(f"{thread_id} [SELESAI] {manga['title']}")
-        return entry
-
-def main():
-    log("=== DEBUG MODE: MANGA SCRAPER ===")
-    init()
-    start_page = load_state() + 1
-
-    manga_list = get_manga_list(start_page)
-    if not manga_list:
-        log("TIDAK ADA DATA → cek koneksi atau struktur HTML berubah")
-        return
-
-    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
-        futures = [executor.submit(download_manga, m) for m in manga_list]
-        for f in as_completed(futures):
-            f.result()
-
-    save_state(start_page)
-    try:
-        with open(metadata_file, "w", encoding="utf-8") as f:
-            json.dump(all_metadata, f, ensure_ascii=False, indent=2)
-        log(f"Metadata disimpan: {len(all_metadata)} manga")
-    except Exception as e:
-        log(f"GAGAL simpan metadata: {e}")
-
-    log(f"SELESAI! Cek folder: {os.path.abspath(DOWNLOAD_DIR)}")
-
-if __name__ == '__main__':
-    main()
+# === SELESAI ===
+save_and_exit()

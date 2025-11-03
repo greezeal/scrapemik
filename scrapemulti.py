@@ -338,7 +338,7 @@ def scrape_all_pages(session):
     safe_print(f"[{now()}] Mengambil daftar komik dari SEMUA halaman...")
     all_comics = []
     page = 1
-    max_pages = 200  # Safety limit yang tinggi
+    max_pages = 5  # Safety limit yang tinggi
 
     while page <= max_pages:
         url = f"https://komikindo.ch/komik-terbaru/page/{page}/" if page > 1 else "https://komikindo.ch/komik-terbaru/"

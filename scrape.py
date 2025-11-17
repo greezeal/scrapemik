@@ -42,6 +42,30 @@ def clean_title(title):
     title = re.sub(r'\s+', ' ', title)
     return title.strip()
 
+# === SAFE CHAPTER SORTING ===
+def safe_chapter_sort(chapters):
+    """Safe chapter sorting dengan handling error untuk format bermasalah"""
+    def get_chapter_num(ch):
+        num_str = ch['number']
+        try:
+            # Clean the string - hapus karakter non-numeric kecuali titik
+            cleaned = re.sub(r'[^\d.]', '', num_str)
+            # Fix double dots dan multiple dots
+            while '..' in cleaned:
+                cleaned = cleaned.replace('..', '.')
+            # Hapus titik di awal atau akhir
+            cleaned = cleaned.strip('.')
+            # Pastikan tidak empty dan valid
+            if cleaned and cleaned != '.':
+                return float(cleaned)
+            return 0
+        except (ValueError, AttributeError):
+            return 0
+    
+    # Sort dengan key yang aman
+    chapters.sort(key=get_chapter_num)
+    return chapters
+
 # === GET & SOUP ===
 def get(url):
     try:
@@ -392,7 +416,7 @@ if __name__ == "__main__":
     print(f"[{now()}] Mengambil daftar komik dari semua halaman...")
     all_comics = []
     page = 1
-    MAX_PAGES = 60  # Safety limit
+    MAX_PAGES = 70  # Safety limit
 
     while page <= MAX_PAGES:
         url = f"https://komikindo.ch/komik-terbaru/page/{page}/" if page > 1 else "https://komikindo.ch/komik-terbaru/"
@@ -510,9 +534,8 @@ if __name__ == "__main__":
             # Tambahkan chapter baru
             if new_chapters:
                 existing_data['chapters'].extend(new_chapters)
-                # Urutkan chapter secara numeric
-                existing_data['chapters'].sort(key=lambda x: 
-                    float(re.search(r'[\d.]+', x['number']).group()) if re.search(r'[\d.]+', x['number']) else 0)
+                # PERBAIKAN: Gunakan safe chapter sorting
+                existing_data['chapters'] = safe_chapter_sort(existing_data['chapters'])
                 save_comic(existing_data)
                 print(f"[{now()}]    Update selesai: +{len(new_chapters)} chapter baru.")
             else:
@@ -570,7 +593,8 @@ if __name__ == "__main__":
             
             time.sleep(DELAY_CHAPTER)
 
-        # Final save
+        # Final save dengan sorting yang aman
+        comic_data['chapters'] = safe_chapter_sort(comic_data['chapters'])
         save_comic(comic_data)
         existing_comics[url] = comic_data
         print(f"[{now()}]    Selesai: {chapter_count} chapter tersimpan")

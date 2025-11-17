@@ -1,63 +1,50 @@
-name: Scrape KomikIndo
+name: KomikIndo Scraper
 
-# Jalankan setiap hari pukul 02:00 UTC (sesuaikan dengan zona waktu kamu)
-# Bisa juga di-trigger manual atau saat push ke main
 on:
   schedule:
-    - cron: '0 2 * * *'   # setiap hari jam 02:00 UTC
-  workflow_dispatch:      # biar bisa dijalankan manual dari GitHub UI
+    - cron: '0 */6 * * *'  # Setiap 6 jam
+  workflow_dispatch:  # Manual trigger
   push:
-    branches: [ main, master ]
+    branches: [ main ]
 
 jobs:
-  scrape:
+  scrape-comics:
     runs-on: ubuntu-latest
-    timeout-minutes: 360    # maksimal 6 jam (beberapa komik bisa sangat lama)
-
+    timeout-minutes: 30
+    
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'   # atau versi yang kamu pakai
-
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install requests beautifulsoup4 lxml
-
-      - name: Create comics output directory
-        run: mkdir -p comics
-
-      - name: Run scraper script
-        env:
-          # Optional: kalau kamu mau batasi jumlah halaman yang di-scrape
-          # MAX_PAGES: 5
-          TZ: Asia/Jakarta        # supaya timestamp di log sesuai WIB
-        run: |
-          python scrape_komikindo.py    # ganti dengan nama file script kamu
-
-      - name: Commit & push hasil JSON (jika ada perubahan)
-        run: |
-          git config --global user.name "github-actions[bot]"
-          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          
-          git add comics/*.json
-          
-          if git diff --staged --quiet; then
-            echo "Tidak ada perubahan pada folder comics/"
-          else
-            git commit -m "Update data komik - $(date +'%Y-%m-%d %H:%M:%S')"
-            git push
-            echo "Perubahan berhasil di-commit & di-push"
-          fi
-
-      - name: Upload comics folder as artifact (untuk debugging)
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: comics-output
-          path: comics/
-          retention-days: 7
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      with:
+        token: ${{ secrets.GITHUB_TOKEN }}
+        
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.9'
+        
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install requests beautifulsoup4 lxml
+        
+    - name: Create comics directory
+      run: mkdir -p comics
+      
+    - name: Run KomikIndo Scraper
+      run: python scrape.py
+      
+    - name: Commit and push changes
+      run: |
+        git config --local user.email "action@github.com"
+        git config --local user.name "GitHub Action"
+        git add comics/
+        git diff --staged --quiet || git commit -m "🤖 Auto-update: Komik data $(date +'%Y-%m-%d %H:%M UTC')"
+        git push
+        
+    - name: Upload comics as artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: komik-data
+        path: comics/
+        retention-days: 30

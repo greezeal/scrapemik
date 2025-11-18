@@ -4,6 +4,7 @@ from datetime import datetime
 
 # === KONFIGURASI ===
 BASE_DIR = "comics"
+SUMMARY_FILE = "comics-summary.json"  # File summary
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
     "Referer": "https://komikindo.ch/"
@@ -15,9 +16,242 @@ os.makedirs(BASE_DIR, exist_ok=True)
 def now():
     return datetime.now().strftime('%Y-%m-%d %H:%M:%S')
 
+def now_iso():
+    return datetime.now().strftime('%Y-%m-%dT%H:%M:%SZ')
+
+# === FUNGSI BARU: BUILD SUMMARY FROM EXISTING COMICS ===
+def build_summary_from_existing():
+    """Buat summary dari semua komik yang sudah ada di folder comics/"""
+    print(f"[{now()}] Membuat summary dari komik yang sudah ada...")
+    
+    if not os.path.exists(BASE_DIR):
+        print(f"[{now()}] Folder {BASE_DIR} tidak ditemukan.")
+        return []
+    
+    comic_files = [f for f in os.listdir(BASE_DIR) if f.endswith('.json')]
+    summary = []
+    
+    for comic_file in comic_files:
+        filepath = os.path.join(BASE_DIR, comic_file)
+        try:
+            with open(filepath, 'r', encoding='utf-8') as f:
+                comic_data = json.load(f)
+            
+            # Siapkan data untuk summary
+            latest_chapter = {"number": "0", "date": ""}
+            chapters = comic_data.get('chapters', [])
+            if chapters:
+                # Ambil chapter terbaru (diasumsikan sudah sorted)
+                latest = chapters[-1]
+                latest_chapter = {
+                    "number": latest.get('number', '0'),
+                    "date": latest.get('date', '')
+                }
+            
+            summary_data = {
+                "slug": sanitize_filename(comic_data.get('title', '')),
+                "title": comic_data.get('title', ''),
+                "cover_image": comic_data.get('cover_image', ''),
+                "type": comic_data.get('type', ''),
+                "status": comic_data.get('status', ''),
+                "genres": comic_data.get('genres', []),
+                "themes": comic_data.get('themes', []),
+                "rating": comic_data.get('rating', 0.0),
+                "last_updated": comic_data.get('last_updated', ''),
+                "scraped_at": now_iso(),
+                "latestChapter": latest_chapter,
+                "url": comic_data.get('url', ''),
+                "total_chapters": len(chapters)
+            }
+            
+            summary.append(summary_data)
+            print(f"[{now()}]    Ditambahkan ke summary: {comic_data.get('title')}")
+            
+        except Exception as e:
+            print(f"[{now()}]    Error memproses {comic_file}: {e}")
+    
+    # Simpan summary
+    if summary:
+        with open(SUMMARY_FILE, 'w', encoding='utf-8') as f:
+            json.dump(summary, f, ensure_ascii=False, indent=2)
+        print(f"[{now()}] Summary berhasil dibuat: {len(summary)} komik")
+    else:
+        print(f"[{now()}] Tidak ada komik yang bisa ditambahkan ke summary")
+    
+    return summary
+
+# === FUNGSI BARU: VALIDATE AND FIX SUMMARY ===
+def validate_and_fix_summary():
+    """Validasi dan perbaiki summary jika ada ketidaksesuaian dengan komik yang ada"""
+    print(f"[{now()}] Memvalidasi summary...")
+    
+    if not os.path.exists(SUMMARY_FILE):
+        print(f"[{now()}] Summary file tidak ditemukan, membuat baru...")
+        return build_summary_from_existing()
+    
+    try:
+        # Load summary yang ada
+        with open(SUMMARY_FILE, 'r', encoding='utf-8') as f:
+            existing_summary = json.load(f)
+        
+        # Load semua komik yang ada
+        existing_comics = get_all_existing_comics()
+        
+        # Buat mapping untuk pengecekan
+        summary_urls = {item.get('url') for item in existing_summary if item.get('url')}
+        comic_urls = set(existing_comics.keys())
+        
+        # Cari komik yang ada di folder tapi tidak di summary
+        missing_in_summary = comic_urls - summary_urls
+        missing_in_folder = summary_urls - comic_urls
+        
+        if missing_in_summary:
+            print(f"[{now()}] Ditemukan {len(missing_in_summary)} komik yang belum ada di summary")
+            
+            for url in missing_in_summary:
+                comic_data = existing_comics[url]
+                update_comics_summary(comic_data)
+                print(f"[{now()}]    Ditambahkan: {comic_data.get('title')}")
+        
+        if missing_in_folder:
+            print(f"[{now()}] Ditemukan {len(missing_in_folder)} komik di summary yang tidak ada di folder")
+            
+            # Hapus dari summary
+            new_summary = [item for item in existing_summary if item.get('url') not in missing_in_folder]
+            
+            with open(SUMMARY_FILE, 'w', encoding='utf-8') as f:
+                json.dump(new_summary, f, ensure_ascii=False, indent=2)
+            
+            print(f"[{now()}]    Dihapus dari summary: {len(missing_in_folder)} komik")
+        
+        if not missing_in_summary and not missing_in_folder:
+            print(f"[{now()}] Summary sudah sinkron dengan komik yang ada")
+            
+        return True
+        
+    except Exception as e:
+        print(f"[{now()}] Error validasi summary: {e}")
+        # Jika error, buat summary baru
+        return build_summary_from_existing()
+
+# === FUNGSI BARU: UPDATE COMICS SUMMARY ===
+def update_comics_summary(comic_data):
+    """Update atau tambah data komik ke comics-summary.json"""
+    try:
+        # Load existing summary jika ada
+        if os.path.exists(SUMMARY_FILE):
+            with open(SUMMARY_FILE, 'r', encoding='utf-8') as f:
+                summary = json.load(f)
+        else:
+            summary = []
+        
+        # Cari komik yang sudah ada berdasarkan slug/URL
+        comic_slug = comic_data.get('slug') or sanitize_filename(comic_data.get('title', ''))
+        existing_index = -1
+        
+        for i, item in enumerate(summary):
+            if (item.get('slug') == comic_slug or 
+                item.get('url') == comic_data.get('url') or
+                item.get('title') == comic_data.get('title')):
+                existing_index = i
+                break
+        
+        # Siapkan data untuk summary
+        latest_chapter = {"number": "0", "date": ""}
+        chapters = comic_data.get('chapters', [])
+        if chapters:
+            # Ambil chapter terbaru (diasumsikan sudah sorted)
+            latest = chapters[-1]
+            latest_chapter = {
+                "number": latest.get('number', '0'),
+                "date": latest.get('date', '')
+            }
+        
+        summary_data = {
+            "slug": comic_slug,
+            "title": comic_data.get('title', ''),
+            "cover_image": comic_data.get('cover_image', ''),
+            "type": comic_data.get('type', ''),
+            "status": comic_data.get('status', ''),
+            "genres": comic_data.get('genres', []),
+            "themes": comic_data.get('themes', []),
+            "rating": comic_data.get('rating', 0.0),
+            "last_updated": comic_data.get('last_updated', ''),
+            "scraped_at": now_iso(),
+            "latestChapter": latest_chapter,
+            "url": comic_data.get('url', ''),
+            "total_chapters": len(chapters)
+        }
+        
+        # Update atau tambah data
+        if existing_index >= 0:
+            summary[existing_index] = summary_data
+            print(f"[{now()}]    Update summary: {comic_data.get('title')}")
+        else:
+            summary.append(summary_data)
+            print(f"[{now()}]    Tambah ke summary: {comic_data.get('title')}")
+        
+        # Simpan file summary
+        with open(SUMMARY_FILE, 'w', encoding='utf-8') as f:
+            json.dump(summary, f, ensure_ascii=False, indent=2)
+            
+        return True
+        
+    except Exception as e:
+        print(f"[{now()}]    Error update summary: {e}")
+        return False
+
+# === FUNGSI BARU: REMOVE FROM SUMMARY ===
+def remove_from_summary(comic_url):
+    """Hapus komik dari summary berdasarkan URL"""
+    try:
+        if not os.path.exists(SUMMARY_FILE):
+            return
+            
+        with open(SUMMARY_FILE, 'r', encoding='utf-8') as f:
+            summary = json.load(f)
+        
+        # Filter out comic dengan URL yang sesuai
+        new_summary = [item for item in summary if item.get('url') != comic_url]
+        
+        if len(new_summary) < len(summary):
+            with open(SUMMARY_FILE, 'w', encoding='utf-8') as f:
+                json.dump(new_summary, f, ensure_ascii=False, indent=2)
+            print(f"[{now()}]    Hapus dari summary: {comic_url}")
+            
+    except Exception as e:
+        print(f"[{now()}]    Error remove from summary: {e}")
+
+# === FUNGSI BARU: GET SUMMARY STATS ===
+def get_summary_stats():
+    """Dapatkan statistik dari summary file"""
+    try:
+        if not os.path.exists(SUMMARY_FILE):
+            return {"total_comics": 0, "ongoing": 0, "completed": 0}
+        
+        with open(SUMMARY_FILE, 'r', encoding='utf-8') as f:
+            summary = json.load(f)
+        
+        ongoing = len([item for item in summary if item.get('status') == 'Ongoing'])
+        completed = len([item for item in summary if item.get('status') == 'Completed'])
+        
+        return {
+            "total_comics": len(summary),
+            "ongoing": ongoing,
+            "completed": completed
+        }
+    except Exception as e:
+        print(f"[{now()}]    Error get summary stats: {e}")
+        return {"total_comics": 0, "ongoing": 0, "completed": 0}
+
 # === SAVE ON STOP ===
 def save_and_exit(sig=None, frame=None):
     print(f"\n[{now()}] Dihentikan oleh user (Ctrl+C)")
+    
+    # Tampilkan statistik summary
+    stats = get_summary_stats()
+    print(f"[{now()}] Statistik Summary: {stats['total_comics']} komik ({stats['ongoing']} ongoing, {stats['completed']} completed)")
+    
     print(f"[{now()}] SELESAI (aman)! Semua data tersimpan per file.")
     sys.exit(0)
 
@@ -89,6 +323,9 @@ def save_comic(comic_data):
     with open(filename, 'w', encoding='utf-8') as f:
         json.dump(comic_data, f, ensure_ascii=False, indent=2)
     print(f"[{now()}]    Simpan: {filename} ({len(comic_data['chapters'])} chapter)")
+    
+    # UPDATE SUMMARY SETELAH SIMPAN KOMIK
+    update_comics_summary(comic_data)
 
 # === LOAD KOMIK YANG SUDAH ADA ===
 def load_existing_comic(url):
@@ -407,16 +644,24 @@ def is_comic_url(url):
 if __name__ == "__main__":
     print(f"[{now()}] Memulai scraping komik dari KomikIndo...")
     print(f"[{now()}] Fitur: Title dari halaman list, Sinopsis, Genre, Rating")
+    print(f"[{now()}] Summary file: {SUMMARY_FILE}")
+    
+    # === VALIDASI SUMMARY SEBELUM MEMULAI ===
+    validate_and_fix_summary()
     
     # Load existing comics
     existing_comics = get_all_existing_comics()
     print(f"[{now()}] Loaded {len(existing_comics)} existing comics")
     
+    # Tampilkan statistik summary awal
+    initial_stats = get_summary_stats()
+    print(f"[{now()}] Summary awal: {initial_stats['total_comics']} komik terdaftar")
+
     # === SCRAPING SEMUA HALAMAN ===
     print(f"[{now()}] Mengambil daftar komik dari semua halaman...")
     all_comics = []
     page = 1
-    MAX_PAGES = 70  # Safety limit
+    MAX_PAGES = 20  # Safety limit
 
     while page <= MAX_PAGES:
         url = f"https://komikindo.ch/komik-terbaru/page/{page}/" if page > 1 else "https://komikindo.ch/komik-terbaru/"
@@ -540,6 +785,8 @@ if __name__ == "__main__":
                 print(f"[{now()}]    Update selesai: +{len(new_chapters)} chapter baru.")
             else:
                 print(f"[{now()}]    Tidak ada chapter baru.")
+                # Update summary meskipun tidak ada chapter baru (untuk update last_updated dll)
+                update_comics_summary(existing_data)
             continue
 
         # === KOMIK BARU: SCRAPING LENGKAP ===
@@ -606,5 +853,9 @@ if __name__ == "__main__":
     # Statistik akhir
     total_chapters = sum(len(comic.get('chapters', [])) for comic in existing_comics.values())
     print(f"[{now()}] Total chapter: {total_chapters}")
+    
+    # Tampilkan statistik summary akhir
+    final_stats = get_summary_stats()
+    print(f"[{now()}] Statistik Summary: {final_stats['total_comics']} komik ({final_stats['ongoing']} ongoing, {final_stats['completed']} completed)")
     
     save_and_exit()

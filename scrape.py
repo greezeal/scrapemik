@@ -10,7 +10,6 @@ USER_AGENTS = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/121.0",
-    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
 ]
 
 def get_headers():
@@ -18,13 +17,12 @@ def get_headers():
         "User-Agent": random.choice(USER_AGENTS),
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
         "Accept-Language": "en-US,en;q=0.9,id;q=0.8",
-        "Accept-Encoding": "gzip, deflate, br",
         "Referer": "https://komikindo.ch/",
         "DNT": "1",
         "Connection": "keep-alive",
-        "Upgrade-Insecure-Requests": "1",
     }
 
+# DELAY OPTIMIZED UNTUK GITHUB ACTIONS
 DELAY_PAGE = 2.0
 DELAY_CHAPTER = 1.5
 os.makedirs(BASE_DIR, exist_ok=True)
@@ -72,14 +70,13 @@ def safe_chapter_sort(chapters):
     chapters.sort(key=get_chapter_num)
     return chapters
 
-# === IMPROVED GET & SOUP WITH PROXY FALLBACK ===
+# === IMPROVED GET & SOUP ===
 def get_with_retry(url, max_retries=2):
     for attempt in range(max_retries):
         try:
             headers = get_headers()
             print(f"   Attempt {attempt + 1}: Mengakses {url}")
             
-            # Gunakan session untuk connection pooling
             session = requests.Session()
             session.headers.update(headers)
             
@@ -87,7 +84,6 @@ def get_with_retry(url, max_retries=2):
             r.encoding = 'utf-8'
             
             if r.status_code == 200:
-                # Cek jika dapat konten yang valid (bukan blocking page)
                 if "komik" in r.text.lower() or "chapter" in r.text.lower():
                     print(f"   ✅ Success mendapatkan konten")
                     return r.text
@@ -107,7 +103,6 @@ def get_with_retry(url, max_retries=2):
         except requests.exceptions.RequestException as e:
             print(f"   Request Error: {e}")
         
-        # Delay sebelum retry
         if attempt < max_retries - 1:
             retry_delay = random.uniform(5, 15)
             print(f"   Waiting {retry_delay:.1f}s sebelum retry...")
@@ -129,7 +124,26 @@ def save_comic(comic_data):
     filename = f"{BASE_DIR}/{safe_title}.json"
     with open(filename, 'w', encoding='utf-8') as f:
         json.dump(comic_data, f, ensure_ascii=False, indent=2)
-    print(f"[{now()}]    Simpan: {filename} ({len(comic_data['chapters'])} chapter)")
+    print(f"[{now()}]    💾 Simpan: {filename} ({len(comic_data['chapters'])} chapter)")
+
+# === SIMPAN SEMUA KOMIK SEKALIGUS (OPTIMIZED UNTUK GITHUB ACTIONS) ===
+def save_all_comics(comics_data):
+    """Simpan semua komik sekaligus - optimized untuk GitHub Actions"""
+    print(f"[{now()}] 💾 Menyimpan semua {len(comics_data)} komik sekaligus...")
+    
+    total_chapters = 0
+    for comic_data in comics_data:
+        title = comic_data['title']
+        safe_title = sanitize_filename(title)
+        filename = f"{BASE_DIR}/{safe_title}.json"
+        
+        with open(filename, 'w', encoding='utf-8') as f:
+            json.dump(comic_data, f, ensure_ascii=False, indent=2)
+        
+        total_chapters += len(comic_data.get('chapters', []))
+        print(f"[{now()}]    ✅ {safe_title}.json ({len(comic_data['chapters'])} chapter)")
+    
+    print(f"[{now()}] 📊 Total: {len(comics_data)} komik, {total_chapters} chapter tersimpan")
 
 # === LOAD KOMIK YANG SUDAH ADA ===
 def load_existing_comic(url):
@@ -443,12 +457,7 @@ def create_mock_data():
         }
     ]
     
-    for comic in mock_comics:
-        safe_title = sanitize_filename(comic['title'])
-        filename = f"{BASE_DIR}/{safe_title}.json"
-        with open(filename, 'w', encoding='utf-8') as f:
-            json.dump(comic, f, ensure_ascii=False, indent=2)
-        print(f"[{now()}]    Created: {filename}")
+    save_all_comics(mock_comics)
     
     # Create info file
     info_data = {
@@ -467,7 +476,8 @@ def create_mock_data():
 # === MAIN SCRIPT ===
 if __name__ == "__main__":
     print(f"[{now()}] 🚀 Memulai scraping komik dari KomikIndo...")
-    print(f"[{now()}] ⚡ Running on GitHub Actions")
+    print(f"[{now()}] ⚡ Running on GitHub Actions - OPTIMIZED MODE")
+    print(f"[{now()}] 💾 Save Strategy: Simpan semua data sekaligus di akhir")
     
     # Test koneksi dulu
     print(f"[{now()}] 🔍 Testing koneksi ke website...")
@@ -479,7 +489,6 @@ if __name__ == "__main__":
         
         if test_response.status_code == 200:
             print(f"[{now()}] ✅ Website dapat diakses, melanjutkan scraping...")
-            # Continue dengan scraping normal
             USE_MOCK_DATA = False
         else:
             print(f"[{now()}] ❌ Website returned status: {test_response.status_code}")
@@ -508,7 +517,7 @@ if __name__ == "__main__":
     print(f"[{now()}] Mengambil daftar komik dari semua halaman...")
     all_comics = []
     page = 1
-    MAX_PAGES = 2  # Reduced for GitHub Actions
+    MAX_PAGES = 2  # Optimized untuk GitHub Actions
 
     while page <= MAX_PAGES:
         url = f"https://komikindo.ch/komik-terbaru/page/{page}/" if page > 1 else "https://komikindo.ch/komik-terbaru/"
@@ -570,22 +579,27 @@ if __name__ == "__main__":
         print(f"[{now()}] ✅ Berhasil membuat {comic_count} mock comics")
         sys.exit(0)
 
-    # === LOOP SETIAP KOMIK ===
+    # === LOOP SETIAP KOMIK - OPTIMIZED UNTUK GITHUB ACTIONS ===
+    print(f"[{now()}] 🚀 Memproses {len(all_comics)} komik (optimized mode)...")
+    
+    updated_comics = []
+    processed_count = 0
+    
     for idx, comic in enumerate(all_comics, 1):
         title, url = comic['title'], comic['url']
-        print(f"\n[{now()}] [{idx}/{len(all_comics)}] → {title}")
+        print(f"\n[{now()}] [{idx}/{len(all_comics)}] 🎯 → {title}")
         
         if not url or not url.startswith('http'):
-            print(f"[{now()}]    URL tidak valid: {url}")
+            print(f"[{now()}]    ❌ URL tidak valid: {url}")
             continue
         
         existing_data = existing_comics.get(url)
         
         if existing_data:
-            print(f"[{now()}]    Sudah ada {len(existing_data.get('chapters', []))} chapter. Cek update...")
+            print(f"[{now()}]    🔄 Sudah ada {len(existing_data.get('chapters', []))} chapter. Cek update...")
             
             if existing_data.get('title') != title:
-                print(f"[{now()}]    Update title: '{existing_data['title']}' → '{title}'")
+                print(f"[{now()}]    ✏️ Update title: '{existing_data['title']}' → '{title}'")
                 existing_data['title'] = title
             
             display_comic_info(existing_data)
@@ -593,27 +607,31 @@ if __name__ == "__main__":
             existing_chapters = {ch['number'] for ch in existing_data.get('chapters', [])}
             new_chapters = []
 
+            # Ambil halaman detail untuk update
             s_detail = soup(url)
             if not s_detail:
-                print(f"[{now()}]    Gagal akses detail. Skip update.")
+                print(f"[{now()}]    ❌ Gagal akses detail. Skip update.")
+                updated_comics.append(existing_data)
                 continue
 
+            # Update last_updated dari chapter terbaru
             last_update = s_detail.find('span', class_='datech')
             if last_update:
                 existing_data['last_updated'] = last_update.get_text(strip=True)
 
+            # Cari chapter baru
             chapters_data = extract_chapters(s_detail)
             for chapter in chapters_data:
                 if chapter['number'] not in existing_chapters:
-                    print(f"[{now()}]    → Chapter BARU: {chapter['number']}")
+                    print(f"[{now()}]    → 🆕 Chapter BARU: {chapter['number']}")
                     
                     s_ch = soup(chapter['url'])
                     if not s_ch:
-                        print(f"[{now()}]       Gagal akses chapter")
+                        print(f"[{now()}]       ❌ Gagal akses chapter")
                         continue
                         
                     images = extract_chapter_images(s_ch)
-                    print(f"[{now()}]       Found {len(images)} images")
+                    print(f"[{now()}]       🖼️ Found {len(images)} images")
                     
                     new_chapters.append({
                         "number": chapter['number'],
@@ -624,45 +642,51 @@ if __name__ == "__main__":
                     
                     time.sleep(DELAY_CHAPTER)
 
+            # Tambahkan chapter baru
             if new_chapters:
                 existing_data['chapters'].extend(new_chapters)
                 existing_data['chapters'] = safe_chapter_sort(existing_data['chapters'])
-                save_comic(existing_data)
-                print(f"[{now()}]    Update selesai: +{len(new_chapters)} chapter baru.")
+                print(f"[{now()}]    ✅ Update selesai: +{len(new_chapters)} chapter baru.")
             else:
-                print(f"[{now()}]    Tidak ada chapter baru.")
+                print(f"[{now()}]    ℹ️ Tidak ada chapter baru.")
+            
+            updated_comics.append(existing_data)
+            processed_count += 1
             continue
 
         # === KOMIK BARU: SCRAPING LENGKAP ===
-        print(f"[{now()}]    Komik baru, mulai scraping...")
+        print(f"[{now()}]    🆕 Komik baru, mulai scraping...")
         
         s_detail = soup(url)
         if not s_detail:
-            print(f"[{now()}]    Gagal akses detail. Skip.")
+            print(f"[{now()}]    ❌ Gagal akses detail. Skip.")
             continue
 
+        # Extract comic info - GUNAKAN TITLE DARI LIST
         comic_data = extract_comic_info(s_detail, url, title)
         comic_data['chapters'] = []
 
         display_comic_info(comic_data)
 
+        # Extract semua chapter
         chapters_data = extract_chapters(s_detail)
-        print(f"[{now()}]    Ditemukan {len(chapters_data)} chapter")
+        print(f"[{now()}]    📚 Ditemukan {len(chapters_data)} chapter")
 
+        # Scraping images untuk setiap chapter
         chapter_count = 0
         total_chapters = len(chapters_data)
         
         for chapter in reversed(chapters_data):
             ch_num, ch_url = chapter['number'], chapter['url']
-            print(f"[{now()}]    → Chapter {ch_num} ({chapter_count + 1}/{total_chapters})")
+            print(f"[{now()}]    → 📖 Chapter {ch_num} ({chapter_count + 1}/{total_chapters})")
 
             s_ch = soup(ch_url)
             if not s_ch: 
-                print(f"[{now()}]       Gagal akses chapter")
+                print(f"[{now()}]       ❌ Gagal akses chapter")
                 continue
             
             images = extract_chapter_images(s_ch)
-            print(f"[{now()}]       Found {len(images)} images")
+            print(f"[{now()}]       🖼️ Found {len(images)} images")
             
             comic_data['chapters'].append({
                 "number": ch_num,
@@ -672,23 +696,27 @@ if __name__ == "__main__":
             })
             
             chapter_count += 1
-            
-            if chapter_count % 5 == 0 or chapter_count == total_chapters:
-                save_comic(comic_data)
-                print(f"[{now()}]    Progress: {chapter_count}/{total_chapters} chapter")
-            
             time.sleep(DELAY_CHAPTER)
 
+        # Sort chapters
         comic_data['chapters'] = safe_chapter_sort(comic_data['chapters'])
-        save_comic(comic_data)
-        existing_comics[url] = comic_data
-        print(f"[{now()}]    Selesai: {chapter_count} chapter tersimpan")
+        updated_comics.append(comic_data)
+        processed_count += 1
+        print(f"[{now()}]    ✅ Selesai: {chapter_count} chapter tersimpan")
+
+    # === SIMPAN SEMUA DATA SEKALIGUS DI AKHIR ===
+    print(f"\n[{now()}] 💾 Menyimpan semua {len(updated_comics)} komik sekaligus...")
+    save_all_comics(updated_comics)
 
     # === SELESAI ===
     print(f"\n[{now()}] 🎉 SEMUA KOMIK SELESAI DIPROSES!")
-    print(f"[{now()}] 📊 Total komik: {len(all_comics)}")
+    print(f"[{now()}] 📊 Total komik: {len(updated_comics)}")
     
-    total_chapters = sum(len(comic.get('chapters', [])) for comic in existing_comics.values())
+    total_chapters = sum(len(comic.get('chapters', [])) for comic in updated_comics)
+    total_images = sum(len(chapter.get('images', [])) for comic in updated_comics for chapter in comic.get('chapters', []))
+    
     print(f"[{now()}] 📚 Total chapter: {total_chapters}")
+    print(f"[{now()}] 🖼️ Total images: {total_images}")
+    print(f"[{now()}] ⏰ Waktu selesai: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     
     save_and_exit()

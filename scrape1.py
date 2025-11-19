@@ -513,14 +513,13 @@ def extract_chapters(s_detail):
                     ch_num = a.find('chapter').get_text(strip=True)
                     ch_url = a['href']
                     
-                    # Get date
-                    date_span = li.find('span', class_='dt')
-                    ch_date = date_span.get_text(strip=True) if date_span else ""
+                    # PERUBAHAN: Gunakan tanggal scraping saat ini, bukan dari website
+                    ch_date = now()  # Tanggal saat chapter di-scrape
                     
                     chapters.append({
                         "number": ch_num,
                         "url": ch_url,
-                        "date": ch_date,
+                        "date": ch_date,  # Gunakan tanggal scraping
                         "images": []
                     })
     
@@ -645,6 +644,7 @@ if __name__ == "__main__":
     print(f"[{now()}] Memulai scraping komik dari KomikIndo...")
     print(f"[{now()}] Fitur: Title dari halaman list, Sinopsis, Genre, Rating")
     print(f"[{now()}] Summary file: {SUMMARY_FILE}")
+    print(f"[{now()}] PERUBAHAN: Date chapter menggunakan tanggal scraping")
     
     # === VALIDASI SUMMARY SEBELUM MEMULAI ===
     validate_and_fix_summary()
@@ -757,7 +757,7 @@ if __name__ == "__main__":
             chapters_data = extract_chapters(s_detail)
             for chapter in chapters_data:
                 if chapter['number'] not in existing_chapters:
-                    print(f"[{now()}]    → Chapter BARU: {chapter['number']}")
+                    print(f"[{now()}]    → Chapter BARU: {chapter['number']} (scraped: {now()})")
                     
                     s_ch = soup(chapter['url'])
                     if not s_ch:
@@ -770,7 +770,7 @@ if __name__ == "__main__":
                     new_chapters.append({
                         "number": chapter['number'],
                         "url": chapter['url'],
-                        "date": chapter['date'],
+                        "date": now(),  # PERUBAHAN: Gunakan tanggal scraping saat ini
                         "images": images
                     })
                     
@@ -814,7 +814,7 @@ if __name__ == "__main__":
         
         for chapter in reversed(chapters_data):  # dari chapter 1 ke terbaru
             ch_num, ch_url = chapter['number'], chapter['url']
-            print(f"[{now()}]    → Chapter {ch_num} ({chapter_count + 1}/{total_chapters})")
+            print(f"[{now()}]    → Chapter {ch_num} ({chapter_count + 1}/{total_chapters}) (scraped: {now()})")
 
             s_ch = soup(ch_url)
             if not s_ch: 
@@ -827,7 +827,7 @@ if __name__ == "__main__":
             comic_data['chapters'].append({
                 "number": ch_num,
                 "url": ch_url,
-                "date": chapter['date'],
+                "date": now(),  # PERUBAHAN: Gunakan tanggal scraping saat ini
                 "images": images
             })
             

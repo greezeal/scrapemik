@@ -1,0 +1,42 @@
+{
+  "title": "Donut",
+  "cover_image": "https://komikindo.ch/wp-content/uploads/2022/03/Komik-Donut-228x319.png",
+  "alternative_titles": [
+    "Donat",
+    "Donatsu",
+    "Doughnut",
+    "Пончик",
+    "ドーナツ"
+  ],
+  "status": "Tamat",
+  "author": [
+    "TwinBox"
+  ],
+  "illustrator": [
+    "TwinBox"
+  ],
+  "type": "Manga",
+  "demographic": "",
+  "themes": [],
+  "genres": [
+    "Yuri"
+  ],
+  "rating": 6.51,
+  "votes": 9,
+  "synopsis": "TwinBox ini bercerita tentang\nOneshot yuri...",
+  "last_updated": "",
+  "url": "https://komikindo.ch/komik/donut/",
+  "scraped_at": "2025-11-19 04:54:40",
+  "chapters": [
+    {
+      "number": "00",
+      "url": "https://komikindo.ch/donut-chapter-00/",
+      "date": "4 tahun yang lalu",
+      "images": [
+        "https://imageainewgeneration.lol/data/16465751/00/0e9aea6fba004a6f5484ca4e9e123d50/xHbycEqLHJhsbcLYRy9XB7jZI00y4L81f3ubtnQm.jpg",
+        "https://himmga.lat/data/16465751/00/0e9aea6fba004a6f5484ca4e9e123d50/t5DcGlDQLqextXkWHAaE9qgkeTnhENJmjVCtmRuB.jpg",
+        "https://gaimgame.pics/data/16465751/00/0e9aea6fba004a6f5484ca4e9e123d50/ChLHpeHeMnFnwCGGbMoAEuoOdCShprbscAVjwvuV.jpg"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,43 @@
+{
+  "title": "Hamster",
+  "cover_image": "https://komikindo.ch/wp-content/uploads/2021/03/Komik-Hamster-213x319.png",
+  "alternative_titles": [],
+  "status": "Tamat",
+  "author": [
+    "Ji Chuan Liu (吉川流)"
+  ],
+  "illustrator": [
+    "Ji Chuan Liu (吉川流)"
+  ],
+  "type": "Manhua",
+  "demographic": "",
+  "themes": [],
+  "genres": [
+    "Comedy",
+    "Slice of Life"
+  ],
+  "rating": 8.27,
+  "votes": 39,
+  "synopsis": "Ji Chuan Liu (吉川流) ini bercerita tentang\nSerangkaian cuplikan singkat dari weibo penulis tentang kesialan kucing rumahan yang licik dan hamster yang sungguh-sungguh.",
+  "last_updated": "",
+  "url": "https://komikindo.ch/komik/hamster/",
+  "scraped_at": "2025-11-19 06:33:19",
+  "chapters": [
+    {
+      "number": "1",
+      "url": "https://komikindo.ch/hamster-chapter-1/",
+      "date": "5 tahun yang lalu",
+      "images": [
+        "https://imageainewgeneration.lol/data/55146683/1/ab323df9c70817435f7bf470b02a1ba1/zCC3cr8pl0PhhZV8rJ7WvFD9tElfL2pONz8ToHW1.png"
+      ]
+    },
+    {
+      "number": "2",
+      "url": "https://komikindo.ch/hamster-chapter-2/",
+      "date": "5 tahun yang lalu",
+      "images": [
+        "https://imageainewgeneration.lol/data/55146683/2/02994f7463ac68470ef5817c8c951c6e/Tz4zAR1iphmaTeatJvI5HrMve9s1pw9ugSo3kD7j.png"
+      ]
+    }
+  ]
+}

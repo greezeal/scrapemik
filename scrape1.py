@@ -661,7 +661,7 @@ if __name__ == "__main__":
     print(f"[{now()}] Mengambil daftar komik dari semua halaman...")
     all_comics = []
     page = 1
-    MAX_PAGES = 50  # Safety limit
+    MAX_PAGES = 60  # Safety limit
 
     while page <= MAX_PAGES:
         url = f"https://komikindo.ch/daftar-manga/page/{page}/?status=Completed&type&format&order&title" if page > 1 else "https://komikindo.ch/daftar-manga/?status=Completed&type=&format=&order=&title="
